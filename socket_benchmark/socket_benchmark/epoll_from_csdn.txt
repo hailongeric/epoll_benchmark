@@ -1,0 +1,132 @@
+1,准备环境
+Server 端：
+
+系统端口限制 默认查看：cat /proc/sys/net/ipv4/ip_local_port_range
+32768 60999（在/etc/sysctl.conf修改）
+
+最大文件句柄限制：查看：cat /proc/sys/fs/file-nr
+297440 0 297373（最大值系统计算）
+备注：这里最大值与内存相关，在把虚拟机的内存由2G变成3G后由17W变成19W，最后修改fs.file-max后提升比较大
+这里原始值为17W左右，修改/etc/sysctl.conf里定义fs.file-max = 1000000 来调整大小，后续有需要继续修改调试
+
+查看系统网络参数相关配置：Vim /etc/sysctl.conf
+
+查看其它限制配置：vim /etc/security/limits.conf
+
+执行 ulimit -n 输出1024，说明对于一个进程而言最多只能打开1024个文件，所以你要采用此默认配置最多也就可以并发上千个TCP连接。
+临时修改：ulimit -n 1048576，但是这种临时修改只对当前登录的用户目前使用的环境有效，系统重启或用户退出会就失效。
+
+需要使用到的命令：
+ulimit -SHn 1048576
+sysctl -w net.ipv4.ip_local_port_range=“1024 65535”
+
+Client配置：
+
+客户端需要的命令
+
+端口限制：如服务端进行修改
+文件端口限制：如服务端，或在命令行做以下配置
+
+echo 2000000 >/proc/sys/fs/nr_open
+ulimit –SHn 1048576
+sysctl -w net.ipv4.ip_local_port_range=“1024 65535”
+
+代码实现流程：
+Server :
+
+Listenfd = socket(AF_INET,);
+setNonBlocking();
+Setsockopt(listenfd, ,SO_REUSEADDR,);//调试时提高效率，回收速度太慢
+Bind(listenfd);
+Epollfd = Epoll_create();
+En. events=EPOLLIN;//服务端只读，在收到客户端信息后，修改事件，再写数据
+epoll_ctl(Epollfd, EPOLL_CTL_ADD, listenfd, ev);
+while(1)
+{
+nEventNum = Epoll_wait(eopllfd,ev,)
+for(I = 0; I < nEventNum ; i++)//对事件进行轮询
+{
+If((.event == EPOLLERR)||(.event == EPOLLHUP))
+{
+Close;
+Continue;
+}
+Else if(event.data.fd == listenfd)
+{
+}
+
+If(.event == EPOLLIN)
+{
+Ret = recv(fd,);
+Printf();
+ev.events = EPOLLOUT;
+epoll_ctl();
+}
+Else if(.event == EPOLLOUT)
+{
+Send();
+ev.events = EPOLLIN;
+epoll_ctl();
+
+}
+
+}
+}
+服务端的连接及打印情况如下：
+
+在这里插入图片描述
+创建到62W时
+
+在这里插入图片描述
+此错误一般是磁盘满导致，但是在这里是客户端在进行epoll_ctl时，内存已满导致注册epoll事件失败，理论上服务端10m个并发长连接应该可以实现。
+
+原因是因为我在服务器端装了二个ubuntu的虚拟机，内存受到了很大限制，部分参数没有配置最大，因此百万级连接无论是从理论还是从实际测试效果来看，都是可行的
+
+Client :
+
+Epollfd = epoll_creat(EVENT);
+
+For(;i<CLIENMAX;)
+{
+Clisockfd = socket();
+Bind(ser_addr)
+Bind(cli_addr);//为了实现客户端上多IP对服务端进行连接，这里需要绑定客户端的IP 端口为0，则是由系统随机分配。
+Connect();
+ev.data.fd= Clisockfd;
+ev.events=EPOLLIN|EPOLLET;
+epoll_ctl (Epollfd ,EPOLL_CTL_ADD,clisockfd,&en);
+}
+
+While(1)
+{
+Scanf();//做了一个小的输入sockfd与服务端进行通信
+ev.data.fd= writefd;
+ev.events=EPOLLOUT|EPOLLET;
+if (epoll_ctl(nEpollfd,EPOLL_CTL_MOD,writefd,&ev) < 0)
+
+eventNum= Epoll_wait(Epollfd,);
+for(;i< eventNum;)//轮询事件
+1
+2
+{
+If(*.event == ERR|HUP)
+{
+Close(fd);
+Continue;
+}
+If(events[i].events & EPOLLOUT)
+{
+Send();
+ev.events = EPOLLIN | EPOLLET;
+epoll_ctl(nEpollfd, EPOLL_CTL_MOD, nSockfd, &ev);
+}
+Else if(events[i].events & EPOLLIN)
+{
+Recv()
+}
+}
+
+}
+
+测试中还有加入在服务端通过多进程，绑定多个IP来与客户端进行建立连接，这个数量级又是一个成倍的增加，但是由于我们这里需要测试的是单进程的多并发最大连接数测试
+
